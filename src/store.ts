@@ -93,7 +93,7 @@ function persist(state: MixState): void {
   }
 }
 
-const restored = typeof localStorage !== "undefined" ? loadPersisted() : null;
+const restored = loadPersisted();
 
 let state: MixState = {
   tokens: restored?.tokens ?? cloneTokens(PRESETS[DEFAULT_MOOD]),
@@ -128,6 +128,7 @@ function emit(): void {
 }
 
 function pushActivity(actor: Actor, kind: string, message: string): void {
+  if (actor !== "human" || kind !== "set_token") lastHumanEdit = null;
   const event = { id: uid(), ts: Date.now(), actor, kind, message };
   state = {
     ...state,
@@ -477,16 +478,30 @@ export function undoLast(actor: Actor): ToolResult {
     return { ok: false, error: "Nothing to undo." };
   }
   const prev = state.history[state.history.length - 1];
+  const tokens = cloneTokens(state.tokens);
+  const skipped: TokenName[] = [];
+  for (const name of TOKEN_NAMES) {
+    if (state.locks[name]) {
+      if (tokens[name] !== prev.tokens[name]) skipped.push(name);
+    } else {
+      tokens[name] = prev.tokens[name];
+    }
+  }
   state = {
     ...state,
     history: state.history.slice(0, -1),
-    tokens: cloneTokens(prev.tokens),
+    tokens,
   };
-  pushActivity(actor, "undo", "Reverted last token change");
+  pushActivity(
+    actor,
+    "undo",
+    `Reverted last token change${skipped.length ? ` (skipped locked: ${skipped.join(", ")})` : ""}`,
+  );
   emit();
   return {
     ok: true,
     tokens: state.tokens,
+    skipped_locked: skipped,
     failures: contrastFailures(state.tokens).map((p) => ({
       pair: p.pair,
       ratio: p.ratio,

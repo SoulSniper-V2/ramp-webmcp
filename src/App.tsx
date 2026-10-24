@@ -26,7 +26,9 @@ export default function App() {
 
   useEffect(() => {
     const ac = new AbortController();
-    void registerRampTools(ac.signal).then(setWebmcp);
+    void registerRampTools(ac.signal).then((status) => {
+      if (!ac.signal.aborted) setWebmcp(status);
+    });
     return () => ac.abort();
   }, []);
 
