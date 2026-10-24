@@ -16,6 +16,7 @@ export type WebMcpStatus = {
   available: boolean;
   connected: boolean;
   tools: string[];
+  error?: string;
   source: "document.modelContext" | "navigator.modelContext" | "none";
 };
 
@@ -23,17 +24,15 @@ function getModelContext(): {
   ctx: ModelContext;
   source: "document.modelContext" | "navigator.modelContext";
 } | null {
-  try {
-    const fromDocument = document.modelContext;
-    if (typeof fromDocument?.registerTool === "function") {
-      return { ctx: fromDocument, source: "document.modelContext" };
+  for (const source of ["document.modelContext", "navigator.modelContext"] as const) {
+    try {
+      const ctx = source === "document.modelContext"
+        ? document.modelContext
+        : navigator.modelContext;
+      if (typeof ctx?.registerTool === "function") return { ctx, source };
+    } catch {
+      // A blocked host property must not hide the other supported API.
     }
-    const fromNavigator = navigator.modelContext;
-    if (typeof fromNavigator?.registerTool === "function") {
-      return { ctx: fromNavigator, source: "navigator.modelContext" };
-    }
-  } catch {
-    /* Safari / unsupported */
   }
   return null;
 }
@@ -210,7 +209,7 @@ const TOOLS: Omit<ModelContextTool, "execute">[] = [
   {
     name: "undo_last",
     description:
-      "Revert the last token change (set_token, generate_ramp, or apply_mood). Locks are preserved. Returns the restored palette and any contrast failures. No-op with an error if history is empty.",
+      "Revert the last token change (set_token, generate_ramp, or apply_mood). Currently locked colors are skipped and listed in skipped_locked. Locks are preserved. Returns the restored palette and any contrast failures. No-op with an error if history is empty.",
     inputSchema: {
       type: "object",
       properties: {},
@@ -222,7 +221,6 @@ const TOOLS: Omit<ModelContextTool, "execute">[] = [
 
 type Exec = (
   input: Record<string, unknown>,
-  extras: { signal: AbortSignal },
 ) => Promise<Record<string, unknown>> | Record<string, unknown>;
 
 const EXECUTORS: Record<string, Exec> = {
@@ -274,36 +272,57 @@ export async function registerRampTools(
     return { available: false, connected: false, tools: [], source: "none" };
   }
   const names: string[] = [];
+  const registration = new AbortController();
+  const status = (): WebMcpStatus => ({
+    available: true,
+    connected: !registration.signal.aborted && names.length === TOOLS.length,
+    tools: [...names],
+    source: found.source,
+  });
+  const cleanup = () => {
+    registration.abort();
+    // Earlier navigator implementations ignore registerTool's signal option.
+    for (const name of names.splice(0)) {
+      found.ctx.unregisterTool?.(name);
+    }
+  };
+  if (signal.aborted) {
+    cleanup();
+    return status();
+  }
+  signal.addEventListener("abort", cleanup, { once: true });
+
   try {
     for (const spec of TOOLS) {
-      if (signal.aborted) break;
+      if (registration.signal.aborted) break;
       const execute = EXECUTORS[spec.name];
-      await found.ctx.registerTool(
+      const pending = found.ctx.registerTool(
         {
           ...spec,
           execute: async (input, extras) => {
-            const result = await execute(input ?? {}, extras);
-            return result;
+            registration.signal.throwIfAborted();
+            extras?.signal?.throwIfAborted();
+            return execute(input ?? {});
           },
         },
-        { signal },
+        { signal: registration.signal },
       );
-      names.push(spec.name);
+      // The current API is async; legacy navigator registration is synchronous.
+      if (pending) await pending;
+      if (!registration.signal.aborted) names.push(spec.name);
     }
-  } catch {
+  } catch (error) {
+    cleanup();
+    signal.removeEventListener("abort", cleanup);
     return {
-      available: true,
-      connected: names.length > 0,
-      tools: names,
-      source: found.source,
+      ...status(),
+      ...(signal.aborted ? {} : {
+        error: error instanceof Error ? error.message : "Tool registration failed.",
+      }),
     };
   }
-  return {
-    available: true,
-    connected: names.length > 0,
-    tools: names,
-    source: found.source,
-  };
+  if (registration.signal.aborted) signal.removeEventListener("abort", cleanup);
+  return status();
 }
 
 export const TOOL_NAMES = TOOLS.map((t) => t.name);

@@ -10,7 +10,7 @@ interface ModelContextTool {
   };
   execute: (
     input: Record<string, unknown>,
-    extras: { signal: AbortSignal },
+    extras?: { signal?: AbortSignal },
   ) => Promise<unknown> | unknown;
 }
 
@@ -18,7 +18,8 @@ interface ModelContext {
   registerTool: (
     tool: ModelContextTool,
     options?: { signal?: AbortSignal },
-  ) => Promise<void>;
+  ) => Promise<void> | void;
+  unregisterTool?: (name: string) => void;
 }
 
 interface Document {

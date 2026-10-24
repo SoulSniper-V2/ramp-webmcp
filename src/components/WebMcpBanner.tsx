@@ -5,7 +5,7 @@ export function WebMcpBanner({ status }: { status: WebMcpStatus }) {
     return (
       <div className="banner ready" role="status">
         <span className="dot" />
-        <strong>agent connected</strong>
+        <strong>tools ready</strong>
         <span className="tools">tools: {status.tools.join(", ")}</span>
       </div>
     );
@@ -14,9 +14,12 @@ export function WebMcpBanner({ status }: { status: WebMcpStatus }) {
     <div className="banner" role="status">
       <span className="dot" />
       <span>
-        WebMCP not detected. Open in the ChatGPT desktop in-app browser, or Chrome 149+
-        with <code>chrome://flags/#enable-webmcp-testing</code>. The mixer works without
-        an agent.
+        {status.error
+          ? `WebMCP registration failed: ${status.error}. `
+          : status.available ? "Registering WebMCP tools. " : "WebMCP not detected. "}
+        Open in a WebMCP-capable browser, or enable{" "}
+        <code>chrome://flags/#enable-webmcp-testing</code> in a supported Chrome release.
+        The mixer works without an agent.
       </span>
     </div>
   );
